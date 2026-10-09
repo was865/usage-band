@@ -188,15 +188,21 @@ export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null,
   }
   const pillText = `${u.contextTokens === null ? '—' : kTokens(u.contextTokens)} / ${kTokens(u.contextWindow)}`
   const pillW = Math.round(18 + pillText.length * 6.2)
-  const pillX = Math.max(0, Math.min(BAR_W - pillW, fillW - pillW))
+  // The pill only rides inside the fill once the fill can hold it; a short fill
+  // keeps its true width, gets a solid head, and the label sits in the empty track.
+  const inside = fillW >= pillW + 24
+  const tag = inside
+    ? `<rect x="${fillW - pillW}" width="${pillW}" height="${BAR_H}" rx="${BAR_H / 2}" fill="${color}"/>
+<text x="${fillW - pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">${pillText}</text>`
+    : (p > 0 ? `<rect x="${Math.max(0, fillW - 3)}" width="3" height="${BAR_H}" rx="1.5" fill="${color}"/>` : '') +
+      `<text class="ub-m" x="${Math.min(fillW + 6, BAR_W - pillW + 12)}" y="${BAR_H / 2 + 4}" font-size="11" font-weight="600">${pillText}</text>`
 
   parts.push(`<circle cx="5" cy="${cy}" r="4" fill="${color}"/>`)
   parts.push(`<text class="ub-t" x="16" y="${cy + 4.5}" font-size="13" font-weight="500">${label}</text>`)
   parts.push(`<g transform="translate(${BAR_X},${(H - BAR_H) / 2})">
 <rect class="ub-k" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/>
 <g clip-path="url(#ub-clip)"><g fill="${color}">${dots.join('')}</g></g>
-<rect x="${pillX}" width="${pillW}" height="${BAR_H}" rx="${BAR_H / 2}" fill="${color}"/>
-<text x="${pillX + pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">${pillText}</text>
+${tag}
 </g>`)
   parts.push(`<text class="ub-m" x="${BAR_X + BAR_W + 8}" y="${cy + 4.5}" font-size="12.5">${percentText}</text>`)
 

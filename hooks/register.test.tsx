@@ -41,6 +41,16 @@ test('svg row carries every figure', async () => {
   expect(svg).toContain('$3.50')
 })
 
+test('a short context fill keeps its true width', async () => {
+  const usage = { contextPercent: 9, contextTokens: 85000, contextWindow: 1_000_000, limits: [], usd: null }
+  const svg = rowSvg(usage, 400, 0)
+  // The label moves into the empty track instead of a pill wider than the fill.
+  expect(svg).toContain('<text class="ub-m"')
+  expect(svg).toContain('85k / 1M')
+  expect(svg).not.toContain('fill="#fff">85k')
+  expect(rowSvg({ ...usage, contextPercent: 60, contextTokens: 600_000 }, 900, 0)).toContain('fill="#fff">600k / 1M')
+})
+
 test('band shows context, limits and cost on every surface', async ($, on) => {
   const mockClock = mock.clock(on, { now: Date.parse('2026-10-09T10:00:00Z') })
   on('turn.complete', (_, e) => ({ text: e.answer, usage: e.usage }))
