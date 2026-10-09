@@ -1,0 +1,5 @@
+{
+  "name": "ansen-mods",
+  "owner": { "name": "was865", "url": "https://github.com/was865" },
+  "plugins": [{ "name": "usage-band", "source": "./", "description": "Context, cache hit rate and countdown, rate limits and cost above the prompt" }]
+}
