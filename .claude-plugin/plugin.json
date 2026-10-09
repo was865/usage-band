@@ -1,6 +1,6 @@
 {
   "name": "usage-band",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Context window, prompt cache hit rate and countdown, rate limits and cost in a band above the prompt",
   "author": {
     "name": "was865",

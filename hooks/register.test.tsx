@@ -1,4 +1,6 @@
+import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
 import { bar, cacheLeft, countdown, hitRate, kTokens, resetIn, rowSvg, tone } from './register'
 
@@ -55,6 +57,8 @@ test('band shows context, limits and cost on every surface', async ($, on) => {
   const mockClock = mock.clock(on, { now: Date.parse('2026-10-09T10:00:00Z') })
   on('turn.complete', (_, e) => ({ text: e.answer, usage: e.usage }))
   on('session.measure', (_, e) => ({ changed: e.changed }))
+  // Stands for core: its own (empty) band beneath every plugin.
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'engine', ref: 0 }))
   await $.session.measure({
     context: { tokens: 84000, window: 200000, percent: 42 },
     rateLimits: [{ kind: 'five_hour', percentUsed: 23.5, resetsAt: '2026-10-09T12:30:00Z' }],
@@ -78,6 +82,54 @@ test('band shows context, limits and cost on every surface', async ($, on) => {
       expect(await ui.find({ type: 'Text', text: /98%/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /42m/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /\$1\.23/ })).toBeDefined()
+    }
+    await ui.unmount()
+  }
+})
+
+const seed = async ($: Engine, on: On, downstream: boolean) => {
+  mock.clock(on, { now: Date.parse('2026-10-09T10:00:00Z') })
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  // Beneath usage-band: another plugin's band (registered after it), or core's own.
+  on('ui.render', { component: 'AbovePrompt' }, (_$, e) => {
+    if (!downstream) return { type: 'engine', ref: 0 }
+    const { Text } = _$.ui.resolve(e)
+    return <Text key="downstream">progress 3/5</Text>
+  })
+  await $.session.measure({
+    context: { tokens: 84000, window: 200000, percent: 42 },
+    rateLimits: [],
+    cost: { usd: 1.234 },
+    changed: ['context', 'rateLimits', 'cost'],
+  })
+}
+
+test('band stacks above a band drawn beneath it', async ($, on) => {
+  await seed($, on, true)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'usage-band', surface, component: 'AbovePrompt', props: {} as never })
+    const tree = (await ui.drawn()) as { type: string; props: { flexDirection?: string }; children: { type: string; props: { key?: string } }[] }
+    expect(tree.type).toBe('Box')
+    expect(tree.props.flexDirection).toBe('column')
+    expect(tree.children).toHaveLength(2)
+    // usage-band first, the downstream band second.
+    expect(tree.children[0]!.type).toBe(surface === 'terminal' ? 'Box' : 'Svg')
+    expect(tree.children[1]!.type).toBe('Text')
+    expect(await ui.find({ type: 'Text', text: 'progress 3/5' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('band alone is unchanged when nothing is drawn beneath it', async ($, on) => {
+  await seed($, on, false)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'usage-band', surface, component: 'AbovePrompt', props: {} as never })
+    const tree = (await ui.drawn()) as { type: string; props: { flexDirection?: string } }
+    if (surface === 'terminal') {
+      expect(tree.type).toBe('Box')
+      expect(tree.props.flexDirection).toBe('row')
+    } else {
+      expect(tree.type).toBe('Svg')
     }
     await ui.unmount()
   }

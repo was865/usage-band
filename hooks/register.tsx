@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { Register, RenderElement } from 'claude-code'
 
 import type { Cache, Usage } from '../types'
 
@@ -266,6 +266,21 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const c = await read($, cache)
 
+    // AbovePrompt hooks form a chain: draw the band, then whatever the plugins
+    // beneath draw (another plugin's band) under it. Core's own drawing, or
+    // nothing, leaves the band alone, as it always was.
+    const below = await next(e)
+    const stack = (band: RenderElement): RenderElement => {
+      if (!below || below.type === 'engine') return band
+      const { Box } = ui
+      return (
+        <Box flexDirection="column">
+          {band}
+          {below}
+        </Box>
+      )
+    }
+
     if (e.surface !== 'terminal' && 'Svg' in ui) {
       const { Svg } = ui
       const W = Math.max(320, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 16))
@@ -277,7 +292,7 @@ export const register: Register = (on, options) => {
       ]
         .filter(Boolean)
         .join(', ')
-      return <Svg source={rowSvg(u, W, now, c, ttl)} alt={alt} width={W} height={H} />
+      return stack(<Svg source={rowSvg(u, W, now, c, ttl)} alt={alt} width={W} height={H} />)
     }
 
     const { Box, Text } = ui
@@ -285,7 +300,7 @@ export const register: Register = (on, options) => {
     const barW = Math.max(8, Math.min(24, cols - 60))
     const p = u.contextPercent
 
-    return (
+    return stack(
       <Box flexDirection="row" gap={2}>
         <Text>
           <Text color={p === null ? 'gray' : tone(p)}>● </Text>
