@@ -53,6 +53,31 @@ test('a short context fill keeps its true width', async () => {
   expect(rowSvg({ ...usage, contextPercent: 60, contextTokens: 600_000 }, 900, 0)).toContain('fill="#fff">600k / 1M')
 })
 
+test('a narrow row sheds detail instead of overlapping the bar', async () => {
+  const usage = {
+    contextPercent: 9,
+    contextTokens: 91000,
+    contextWindow: 1_000_000,
+    limits: [
+      { kind: 'five_hour', percentUsed: 4, resetsAt: '2026-10-09T14:27:00Z' },
+      { kind: 'seven_day', percentUsed: 8, resetsAt: '2026-10-10T05:47:00Z' },
+    ],
+    usd: 0.59,
+  }
+  const now = Date.parse('2026-10-09T10:00:00Z')
+  const wide = rowSvg(usage, 1200, now, { at: now, hit: 91 }, 3_600_000)
+  expect(wide).toContain('↻ 4h27m')
+  expect(wide).toContain('◷ 1h')
+  const narrow = rowSvg(usage, 726, now, { at: now, hit: 91 }, 3_600_000)
+  expect(narrow).not.toContain('↻')
+  expect(narrow).toContain('91%')
+  // The context bar ends before the first separator.
+  const barW = Number(/<rect class="ub-k" width="(\d+)"/.exec(narrow)![1])
+  const sep = Number(/<line class="ub-sep" x1="([\d.]+)"/.exec(narrow)![1])
+  expect(barW >= 120).toBe(true)
+  expect(sep > 85 + barW + 8 + 30).toBe(true)
+})
+
 test('band shows context, limits and cost on every surface', async ($, on) => {
   const mockClock = mock.clock(on, { now: Date.parse('2026-10-09T10:00:00Z') })
   on('turn.complete', (_, e) => ({ text: e.answer, usage: e.usage }))

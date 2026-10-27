@@ -109,72 +109,86 @@ export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null,
   const parts: string[] = []
   const cy = H / 2
 
+  const label = 'Context'
+  const BAR_X = Math.round(16 + textW(label, 13) + 12)
+  const PCT_W = textW('100%', 12.5)
+  const GAP = 22
+
   // Right side first: limits and cost take what they need, the bar gets the rest.
-  const right: { w: number; draw: (x: number) => string }[] = []
-  const showReset = W > 560
-  if (c) {
-    const { ms, share } = cacheLeft(c, ttl, now)
-    const isCold = ms <= 0
-    const hit = c.hit === null ? '—' : pct(c.hit)
-    const left = countdown(ms)
-    const color = share < 0.2 ? AMBER : TEAL
-    const w = 22 + textW('Cache', 11) + 4 + textW(hit, 12.5) + 6 + textW(`◷ ${left}`, 11)
-    right.push({
-      w,
-      draw: x => {
-        // The ring drains as the cache ages; a cold cache leaves only the track.
-        let s = isCold ? ring(x + 8, cy, 7, 0, color) : ring(x + 8, cy, 7, share * 100, color)
-        let tx = x + 22
-        s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11" font-weight="500">Cache</text>`
-        tx += textW('Cache', 11) + 4
-        s += `<text class="${isCold ? 'ub-m' : 'ub-t'}" x="${tx}" y="${cy + 4.5}" font-size="12.5" font-weight="600">${hit}</text>`
-        tx += textW(hit, 12.5) + 6
-        s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11"${isCold ? '' : ` fill="${color}" style="fill:${color}"`}>◷ ${left}</text>`
-        return s
-      },
-    })
-  }
-  for (const l of u.limits) {
-    const name = LABELS[l.kind] ?? l.kind
-    const reset = showReset ? resetIn(l.resetsAt, now) : ''
-    const value = pct(l.percentUsed)
-    const color = hue(l.percentUsed, BLUE)
-    const w = 22 + textW(name, 11) + 4 + textW(value, 12.5) + (reset ? 6 + textW(`↻ ${reset}`, 11) : 0)
-    right.push({
-      w,
-      draw: x => {
-        let s = ring(x + 8, cy, 7, l.percentUsed, color)
-        let tx = x + 22
-        s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11" font-weight="500">${xml(name)}</text>`
-        tx += textW(name, 11) + 4
-        s += `<text class="ub-t" x="${tx}" y="${cy + 4.5}" font-size="12.5" font-weight="600">${value}</text>`
-        tx += textW(value, 12.5) + 6
-        if (reset) s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11">↻ ${reset}</text>`
-        return s
-      },
-    })
-  }
-  if (u.usd !== null) {
-    const text = `$${u.usd.toFixed(2)}`
-    const w = Math.round(textW(text, 12) + 18)
-    right.push({
-      w,
-      draw: x =>
-        `<rect class="ub-k" x="${x}" y="${(H - 18) / 2}" width="${w}" height="18" rx="9"/>` +
-        `<text class="ub-t" x="${x + w / 2}" y="${cy + 4.5}" text-anchor="middle" font-size="12" font-weight="600">${text}</text>`,
-    })
+  // detail 2 shows everything; 1 drops the reset times; 0 also drops the cache countdown.
+  const build = (detail: number) => {
+    const right: { w: number; draw: (x: number) => string }[] = []
+    const showReset = detail >= 2
+    const showLeft = detail >= 1
+    if (c) {
+      const { ms, share } = cacheLeft(c, ttl, now)
+      const isCold = ms <= 0
+      const hit = c.hit === null ? '—' : pct(c.hit)
+      const left = countdown(ms)
+      const color = share < 0.2 ? AMBER : TEAL
+      const w = 22 + textW('Cache', 11) + 4 + textW(hit, 12.5) + (showLeft ? 6 + textW(`◷ ${left}`, 11) : 0)
+      right.push({
+        w,
+        draw: x => {
+          // The ring drains as the cache ages; a cold cache leaves only the track.
+          let s = isCold ? ring(x + 8, cy, 7, 0, color) : ring(x + 8, cy, 7, share * 100, color)
+          let tx = x + 22
+          s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11" font-weight="500">Cache</text>`
+          tx += textW('Cache', 11) + 4
+          s += `<text class="${isCold ? 'ub-m' : 'ub-t'}" x="${tx}" y="${cy + 4.5}" font-size="12.5" font-weight="600">${hit}</text>`
+          tx += textW(hit, 12.5) + 6
+          if (showLeft)
+            s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11"${isCold ? '' : ` fill="${color}" style="fill:${color}"`}>◷ ${left}</text>`
+          return s
+        },
+      })
+    }
+    for (const l of u.limits) {
+      const name = LABELS[l.kind] ?? l.kind
+      const reset = showReset ? resetIn(l.resetsAt, now) : ''
+      const value = pct(l.percentUsed)
+      const color = hue(l.percentUsed, BLUE)
+      const w = 22 + textW(name, 11) + 4 + textW(value, 12.5) + (reset ? 6 + textW(`↻ ${reset}`, 11) : 0)
+      right.push({
+        w,
+        draw: x => {
+          let s = ring(x + 8, cy, 7, l.percentUsed, color)
+          let tx = x + 22
+          s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11" font-weight="500">${xml(name)}</text>`
+          tx += textW(name, 11) + 4
+          s += `<text class="ub-t" x="${tx}" y="${cy + 4.5}" font-size="12.5" font-weight="600">${value}</text>`
+          tx += textW(value, 12.5) + 6
+          if (reset) s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11">↻ ${reset}</text>`
+          return s
+        },
+      })
+    }
+    if (u.usd !== null) {
+      const text = `$${u.usd.toFixed(2)}`
+      const w = Math.round(textW(text, 12) + 18)
+      right.push({
+        w,
+        draw: x =>
+          `<rect class="ub-k" x="${x}" y="${(H - 18) / 2}" width="${w}" height="18" rx="9"/>` +
+          `<text class="ub-t" x="${x + w / 2}" y="${cy + 4.5}" text-anchor="middle" font-size="12" font-weight="600">${text}</text>`,
+      })
+    }
+
+    return { right, rightW: right.reduce((s, r) => s + r.w, 0) + GAP * right.length }
   }
 
-  const GAP = 22
-  const rightW = right.reduce((s, r) => s + r.w, 0) + GAP * right.length
+  // Shed detail until the bar keeps a readable width, so nothing overlaps it.
+  const MIN_BAR = 120
+  const room = (rightW: number) => W - BAR_X - rightW - 12 - PCT_W
+  let layout = build(2)
+  for (let detail = 1; detail >= 0 && room(layout.rightW) < MIN_BAR; detail--) layout = build(detail)
+  const { right, rightW } = layout
 
   // Context: label, dithered bar, a pill riding the fill head, the percent.
-  const label = 'Context'
   const p = u.contextPercent ?? 0
   const color = hue(p, CLAY)
   const percentText = u.contextPercent === null ? '—' : pct(p)
-  const BAR_X = Math.round(16 + textW(label, 13) + 12)
-  const BAR_W = Math.round(Math.max(80, W - BAR_X - rightW - 12 - textW('100%', 12.5)))
+  const BAR_W = Math.round(Math.max(40, room(rightW)))
   const fillW = Math.round(BAR_W * (p / 100))
   const cols = Math.floor(fillW / CELL)
   const rows = Math.floor(BAR_H / CELL)
