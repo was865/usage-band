@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { bar, cacheLeft, countdown, hitRate, kTokens, resetIn, rowSvg, tone } from './register'
+import { bar, cacheLeft, countdown, hitRate, kTokens, layoutRow, resetIn, rowSvg, tone } from './register'
 
 test('helpers', async () => {
   expect(bar(50)).toBe('█████     ')
@@ -76,6 +76,36 @@ test('a narrow row sheds detail instead of overlapping the bar', async () => {
   const sep = Number(/<line class="ub-sep" x1="([\d.]+)"/.exec(narrow)![1])
   expect(barW >= 120).toBe(true)
   expect(sep > 85 + barW + 8 + 30).toBe(true)
+})
+
+test('the svg picks a layout by the width it is drawn at', async () => {
+  const now = Date.parse('2026-10-30T11:29:00Z')
+  const usage = {
+    contextPercent: 59,
+    contextTokens: 588000,
+    contextWindow: 1_000_000,
+    limits: [
+      { kind: 'five_hour', percentUsed: 2, resetsAt: '2026-10-30T15:00:00Z' },
+      { kind: 'seven_day', percentUsed: 19, resetsAt: '2026-11-01T05:00:00Z' },
+    ],
+    usd: 58.64,
+  }
+  const cache = { at: now, hit: 100 }
+  const svg = rowSvg(usage, 624, now, cache, 3_600_000)
+  // Several nested layouts, each switched on by a media query on the drawn width.
+  expect((svg.match(/class="ub-L ub-L\d+"/g) ?? []).length > 3).toBe(true)
+  expect(svg).toContain('(max-width:623.99px){.ub-L0{display:none}}')
+  expect(svg.length < 131072).toBe(true)
+  // Narrow layouts shed the word Context but never draw the pill label left of the bar.
+  const narrow = layoutRow(usage, 420, now, cache, 3_600_000, 0)
+  expect(narrow.fits).toBe(true)
+  const drawn = narrow.draw(narrow.fillW)
+  expect(drawn).not.toContain('>Context<')
+  expect(drawn).not.toMatch(/<text class="ub-m" x="-/)
+  // Too narrow for any layout: drawn wider, for its viewport to shrink whole.
+  const tiny = layoutRow(usage, 300, now, cache, 3_600_000, 0)
+  expect(tiny.fits).toBe(false)
+  expect(tiny.span > 300).toBe(true)
 })
 
 test('band shows context, limits and cost on every surface', async ($, on) => {

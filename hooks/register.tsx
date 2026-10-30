@@ -105,21 +105,42 @@ const ring = (cx: number, cy: number, r: number, percent: number, color: string)
 <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${dash.toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`
 }
 
-export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null, ttl = TTL_MS['1h']!) => {
-  const parts: string[] = []
+// The context dither, drawn once for the widest fill with its dense end at the
+// right, so every layout shows it head-aligned through its own clip. One path per
+// twinkle phase keeps the markup small.
+const dither = (fillW: number) => {
+  const cols = Math.floor(fillW / CELL)
+  const rows = Math.floor(BAR_H / CELL)
+  const d = ['', '', '', '']
+  for (let c = 0; c < cols; c++) {
+    const density = 0.35 + 0.6 * Math.pow(c / Math.max(1, cols), 1.2)
+    for (let r = 0; r < rows; r++) {
+      if (noise(c, r) < density) d[Math.floor(noise(r, c) * 4)] += `M${c * CELL + 1} ${r * CELL + 1}h2v2h-2z`
+    }
+  }
+  return d.map((path, i) => (path ? `<path class="ub-t${i}" d="${path}"/>` : '')).join('')
+}
+
+// The bar never gets narrower than this; a row that would needs shrinking whole.
+const MIN_FIT_BAR = 56
+
+// One layout of the row, W wide: the bar's fill and a drawing given the widest fill.
+export const layoutRow = (u: Usage, W: number, now: number, c: Cache | null, ttl: number, id: number) => {
   const cy = H / 2
 
-  const label = 'Context'
-  const BAR_X = Math.round(16 + textW(label, 13) + 12)
   const PCT_W = textW('100%', 12.5)
   const GAP = 22
 
   // Right side first: limits and cost take what they need, the bar gets the rest.
-  // detail 2 shows everything; 1 drops the reset times; 0 also drops the cache countdown.
+  // detail 4 shows everything; 3 drops the reset times; 2 the cache countdown; 1 the
+  // cost; 0 the word Context, leaving its dot.
   const build = (detail: number) => {
+    const label = detail >= 1 ? 'Context' : ''
+    const barX = Math.round(label ? 16 + textW(label, 13) + 12 : 16)
     const right: { w: number; draw: (x: number) => string }[] = []
-    const showReset = detail >= 2
-    const showLeft = detail >= 1
+    const showReset = detail >= 4
+    const showLeft = detail >= 3
+    const showCost = detail >= 2
     if (c) {
       const { ms, share } = cacheLeft(c, ttl, now)
       const isCold = ms <= 0
@@ -163,7 +184,7 @@ export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null,
         },
       })
     }
-    if (u.usd !== null) {
+    if (u.usd !== null && showCost) {
       const text = `$${u.usd.toFixed(2)}`
       const w = Math.round(textW(text, 12) + 18)
       right.push({
@@ -174,60 +195,96 @@ export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null,
       })
     }
 
-    return { right, rightW: right.reduce((s, r) => s + r.w, 0) + GAP * right.length }
+    const rightW = right.reduce((s, r) => s + r.w, 0) + GAP * right.length
+    return { label, barX, right, rightW, room: W - barX - rightW - 12 - PCT_W }
   }
 
   // Shed detail until the bar keeps a readable width, so nothing overlaps it.
   const MIN_BAR = 120
-  const room = (rightW: number) => W - BAR_X - rightW - 12 - PCT_W
-  let layout = build(2)
-  for (let detail = 1; detail >= 0 && room(layout.rightW) < MIN_BAR; detail--) layout = build(detail)
-  const { right, rightW } = layout
+  let layout = build(4)
+  for (let detail = 3; detail >= 1 && layout.room < MIN_BAR; detail--) layout = build(detail)
+  // The word Context goes last, only once the bar is down to its floor.
+  if (layout.room < MIN_FIT_BAR) layout = build(0)
+  const { label, barX: BAR_X, right, rightW } = layout
+  // Drawn this wide: W, or wider when even the barest layout overflows it.
+  const span = W + Math.max(0, MIN_FIT_BAR - layout.room)
 
   // Context: label, dithered bar, a pill riding the fill head, the percent.
   const p = u.contextPercent ?? 0
   const color = hue(p, CLAY)
   const percentText = u.contextPercent === null ? '—' : pct(p)
-  const BAR_W = Math.round(Math.max(40, room(rightW)))
+  const BAR_W = Math.round(Math.max(MIN_FIT_BAR, layout.room))
   const fillW = Math.round(BAR_W * (p / 100))
-  const cols = Math.floor(fillW / CELL)
-  const rows = Math.floor(BAR_H / CELL)
-  const dots: string[] = []
-  for (let c = 0; c < cols; c++) {
-    const density = 0.35 + 0.6 * Math.pow(c / Math.max(1, cols), 1.2)
-    for (let r = 0; r < rows; r++) {
-      if (noise(c, r) < density)
-        dots.push(`<rect class="ub-t${Math.floor(noise(r, c) * 4)}" x="${c * CELL + 1}" y="${r * CELL + 1}" width="2" height="2"/>`)
-    }
-  }
   const pillText = `${u.contextTokens === null ? '—' : kTokens(u.contextTokens)} / ${kTokens(u.contextWindow)}`
   const pillW = Math.round(18 + pillText.length * 6.2)
   // The pill only rides inside the fill once the fill can hold it; a short fill
-  // keeps its true width, gets a solid head, and the label sits in the empty track.
+  // keeps its true width, gets a solid head, and the label sits in the empty track,
+  // or is left out when the track cannot hold it (the percent still shows).
   const inside = fillW >= pillW + 24
+  const trackX = Math.min(fillW + 6, BAR_W - pillW + 12)
   const tag = inside
     ? `<rect x="${fillW - pillW}" width="${pillW}" height="${BAR_H}" rx="${BAR_H / 2}" fill="${color}"/>
 <text x="${fillW - pillW / 2}" y="${BAR_H / 2 + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">${pillText}</text>`
     : (p > 0 ? `<rect x="${Math.max(0, fillW - 3)}" width="3" height="${BAR_H}" rx="1.5" fill="${color}"/>` : '') +
-      `<text class="ub-m" x="${Math.min(fillW + 6, BAR_W - pillW + 12)}" y="${BAR_H / 2 + 4}" font-size="11" font-weight="600">${pillText}</text>`
+      (trackX >= 6
+        ? `<text class="ub-m" x="${trackX}" y="${BAR_H / 2 + 4}" font-size="11" font-weight="600">${pillText}</text>`
+        : '')
 
-  parts.push(`<circle cx="5" cy="${cy}" r="4" fill="${color}"/>`)
-  parts.push(`<text class="ub-t" x="16" y="${cy + 4.5}" font-size="13" font-weight="500">${label}</text>`)
-  parts.push(`<g transform="translate(${BAR_X},${(H - BAR_H) / 2})">
+  const draw = (maxFill: number) => {
+    const parts: string[] = []
+    parts.push(`<circle cx="5" cy="${cy}" r="4" fill="${color}"/>`)
+    if (label) parts.push(`<text class="ub-t" x="16" y="${cy + 4.5}" font-size="13" font-weight="500">${label}</text>`)
+    parts.push(`<g transform="translate(${BAR_X},${(H - BAR_H) / 2})">
+<clipPath id="ub-clip${id}"><rect width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/></clipPath>
 <rect class="ub-k" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/>
-<g clip-path="url(#ub-clip)"><g fill="${color}">${dots.join('')}</g></g>
+${fillW > 0 ? `<g clip-path="url(#ub-clip${id})"><g clip-path="url(#ub-fill${id})"><use href="#ub-dots" x="${fillW - maxFill}" fill="${color}"/></g></g>
+<clipPath id="ub-fill${id}"><rect width="${fillW}" height="${BAR_H}"/></clipPath>` : ''}
 ${tag}
 </g>`)
-  parts.push(`<text class="ub-m" x="${BAR_X + BAR_W + 8}" y="${cy + 4.5}" font-size="12.5">${percentText}</text>`)
+    parts.push(`<text class="ub-m" x="${BAR_X + BAR_W + 8}" y="${cy + 4.5}" font-size="12.5">${percentText}</text>`)
 
-  let x = W - rightW + GAP
-  for (const r of right) {
-    parts.push(`<line class="ub-sep" x1="${x - GAP / 2}" y1="6" x2="${x - GAP / 2}" y2="${H - 6}"/>`)
-    parts.push(r.draw(x))
-    x += r.w + GAP
+    let x = span - rightW + GAP
+    for (const r of right) {
+      parts.push(`<line class="ub-sep" x1="${x - GAP / 2}" y1="6" x2="${x - GAP / 2}" y2="${H - 6}"/>`)
+      parts.push(r.draw(x))
+      x += r.w + GAP
+    }
+    return parts.join('\n')
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT}">
+  // Even the barest layout may not fit W; rowSvg then shrinks a wider one instead.
+  return { fillW, draw, span, fits: span === W }
+}
+
+// Narrowest layout tried; each step is a tenth narrower than the last.
+const MIN_W = 240
+
+// The desktop slot's true width is not known here: W comes from cells, and the
+// surface shrinks a wider drawing to fit. So the SVG carries a layout per step
+// down from W and its own media queries, which see the width it is drawn at,
+// show the widest that fits; each layout sits in a nested viewport, unscaled.
+export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null, ttl = TTL_MS['1h']!) => {
+  // The narrowest layout that still fits is shown below its width too, scaled down
+  // whole by its viewport rather than overlapping.
+  const widths = [W]
+  const layouts = [layoutRow(u, W, now, c, ttl, 0)]
+  for (let w = Math.round(W * 0.9); w >= MIN_W; w = Math.round(w * 0.9)) {
+    const l = layoutRow(u, w, now, c, ttl, widths.length)
+    if (!l.fits) break
+    widths.push(w)
+    layouts.push(l)
+  }
+  const maxFill = Math.max(...layouts.map(l => l.fillW))
+
+  const show = widths
+    .map((w, i) =>
+      i === 0
+        ? `@media (max-width:${w - 0.01}px){.ub-L0{display:none}}`
+        : `@media ${i < widths.length - 1 ? `(min-width:${w}px) and ` : ''}(max-width:${widths[i - 1]! - 0.01}px){.ub-L${i}{display:inline}}`,
+    )
+    .join('\n')
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-family="${FONT}">
 <style>
 .ub-t{fill:#1f1f1f}.ub-m{fill:#8a8a8a}.ub-k{fill:#e4e4e2}.ub-ring{stroke:#e4e4e2}.ub-sep{stroke:#d8d8d4;stroke-width:1}
 @media (prefers-color-scheme: dark){.ub-t{fill:#ececec}.ub-m{fill:#9a9a9a}.ub-k{fill:#3a3a3a}.ub-ring{stroke:#3d3d3d}.ub-sep{stroke:#4a4a4a}}
@@ -235,9 +292,18 @@ ${tag}
 .ub-t1{animation-duration:3.1s;animation-delay:-.7s}.ub-t2{animation-duration:2.2s;animation-delay:-1.3s}.ub-t3{animation-duration:3.6s;animation-delay:-.4s}
 @keyframes ub-tw{0%,100%{opacity:1}50%{opacity:.45}}
 @media (prefers-reduced-motion: reduce){.ub-t0,.ub-t1,.ub-t2,.ub-t3{animation:none}}
+.ub-L{display:none}.ub-L0{display:inline}
+${show}
 </style>
-<defs><clipPath id="ub-clip"><rect width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/></clipPath></defs>
-${parts.join('\n')}
+<defs><g id="ub-dots">${dither(maxFill)}</g></defs>
+${layouts
+  .map(
+    (l, i) =>
+      `<svg class="ub-L ub-L${i}" width="100%" height="100%" viewBox="0 0 ${l.span} ${H}" preserveAspectRatio="xMinYMid meet">
+${l.draw(maxFill)}
+</svg>`,
+  )
+  .join('\n')}
 </svg>`
 }
 
