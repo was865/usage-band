@@ -102,10 +102,22 @@ test('the svg picks a layout by the width it is drawn at', async () => {
   const drawn = narrow.draw(narrow.fillW)
   expect(drawn).not.toContain('>Context<')
   expect(drawn).not.toMatch(/<text class="ub-m" x="-/)
+  // The compact steps: no bar, just the dot and the percent beside the rings.
+  const compact = layoutRow(usage, 300, now, cache, 3_600_000, 0)
+  expect(compact.fits).toBe(true)
+  const bare = compact.draw(compact.fillW)
+  expect(bare).not.toContain('ub-clip')
+  expect(bare).not.toContain('>Cache<')
+  expect(bare).toContain('>59%<')
   // Too narrow for any layout: drawn wider, for its viewport to shrink whole.
-  const tiny = layoutRow(usage, 300, now, cache, 3_600_000, 0)
+  const tiny = layoutRow(usage, 200, now, cache, 3_600_000, 0)
   expect(tiny.fits).toBe(false)
-  expect(tiny.span > 300).toBe(true)
+  expect(tiny.span > 200).toBe(true)
+  // A lone layout is never hidden, or a narrower slot would draw nothing.
+  const lone = rowSvg(usage, 300, now, cache, 3_600_000)
+  expect(lone).toContain('ub-L0')
+  expect(lone).not.toContain('ub-L1')
+  expect(lone).not.toContain('{.ub-L0{display:none}}')
 })
 
 test('band shows context, limits and cost on every surface', async ($, on) => {

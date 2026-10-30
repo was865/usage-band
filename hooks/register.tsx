@@ -129,11 +129,11 @@ export const layoutRow = (u: Usage, W: number, now: number, c: Cache | null, ttl
   const cy = H / 2
 
   const PCT_W = textW('100%', 12.5)
-  const GAP = 22
 
   // Right side first: limits and cost take what they need, the bar gets the rest.
   // detail 4 shows everything; 3 drops the reset times; 2 the cache countdown; 1 the
-  // cost; 0 the word Context, leaving its dot.
+  // cost; 0 the word Context, leaving its dot; -1 the word Cache, and tightens the
+  // gaps; -2 the bar itself, leaving the dot and the percent.
   const build = (detail: number) => {
     const label = detail >= 1 ? 'Context' : ''
     const barX = Math.round(label ? 16 + textW(label, 13) + 12 : 16)
@@ -141,21 +141,25 @@ export const layoutRow = (u: Usage, W: number, now: number, c: Cache | null, ttl
     const showReset = detail >= 4
     const showLeft = detail >= 3
     const showCost = detail >= 2
+    const showCacheWord = detail >= 0
+    const hasBar = detail >= -1
+    const gap = detail >= 0 ? 22 : 14
     if (c) {
       const { ms, share } = cacheLeft(c, ttl, now)
       const isCold = ms <= 0
       const hit = c.hit === null ? '—' : pct(c.hit)
       const left = countdown(ms)
       const color = share < 0.2 ? AMBER : TEAL
-      const w = 22 + textW('Cache', 11) + 4 + textW(hit, 12.5) + (showLeft ? 6 + textW(`◷ ${left}`, 11) : 0)
+      const word = showCacheWord ? textW('Cache', 11) + 4 : 0
+      const w = 22 + word + textW(hit, 12.5) + (showLeft ? 6 + textW(`◷ ${left}`, 11) : 0)
       right.push({
         w,
         draw: x => {
           // The ring drains as the cache ages; a cold cache leaves only the track.
           let s = isCold ? ring(x + 8, cy, 7, 0, color) : ring(x + 8, cy, 7, share * 100, color)
           let tx = x + 22
-          s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11" font-weight="500">Cache</text>`
-          tx += textW('Cache', 11) + 4
+          if (showCacheWord) s += `<text class="ub-m" x="${tx}" y="${cy + 4}" font-size="11" font-weight="500">Cache</text>`
+          tx += word
           s += `<text class="${isCold ? 'ub-m' : 'ub-t'}" x="${tx}" y="${cy + 4.5}" font-size="12.5" font-weight="600">${hit}</text>`
           tx += textW(hit, 12.5) + 6
           if (showLeft)
@@ -195,25 +199,28 @@ export const layoutRow = (u: Usage, W: number, now: number, c: Cache | null, ttl
       })
     }
 
-    const rightW = right.reduce((s, r) => s + r.w, 0) + GAP * right.length
-    return { label, barX, right, rightW, room: W - barX - rightW - 12 - PCT_W }
+    const rightW = right.reduce((s, r) => s + r.w, 0) + gap * right.length
+    const room = W - barX - rightW - 12 - PCT_W
+    // What W has to spare past the bar's floor, or past the percent with no bar.
+    const slack = hasBar ? room - MIN_FIT_BAR : W - 16 - PCT_W - 12 - rightW
+    return { label, barX, right, rightW, gap, hasBar, room, slack }
   }
 
   // Shed detail until the bar keeps a readable width, so nothing overlaps it.
   const MIN_BAR = 120
   let layout = build(4)
   for (let detail = 3; detail >= 1 && layout.room < MIN_BAR; detail--) layout = build(detail)
-  // The word Context goes last, only once the bar is down to its floor.
-  if (layout.room < MIN_FIT_BAR) layout = build(0)
-  const { label, barX: BAR_X, right, rightW } = layout
+  // The compact steps go last, only once the bar is down to its floor.
+  for (let detail = 0; detail >= -2 && layout.slack < 0; detail--) layout = build(detail)
+  const { label, barX: BAR_X, right, rightW, gap: GAP, hasBar } = layout
   // Drawn this wide: W, or wider when even the barest layout overflows it.
-  const span = W + Math.max(0, MIN_FIT_BAR - layout.room)
+  const span = W + Math.max(0, -layout.slack)
 
   // Context: label, dithered bar, a pill riding the fill head, the percent.
   const p = u.contextPercent ?? 0
   const color = hue(p, CLAY)
   const percentText = u.contextPercent === null ? '—' : pct(p)
-  const BAR_W = Math.round(Math.max(MIN_FIT_BAR, layout.room))
+  const BAR_W = hasBar ? Math.round(Math.max(MIN_FIT_BAR, layout.room)) : 0
   const fillW = Math.round(BAR_W * (p / 100))
   const pillText = `${u.contextTokens === null ? '—' : kTokens(u.contextTokens)} / ${kTokens(u.contextWindow)}`
   const pillW = Math.round(18 + pillText.length * 6.2)
@@ -234,14 +241,18 @@ export const layoutRow = (u: Usage, W: number, now: number, c: Cache | null, ttl
     const parts: string[] = []
     parts.push(`<circle cx="5" cy="${cy}" r="4" fill="${color}"/>`)
     if (label) parts.push(`<text class="ub-t" x="16" y="${cy + 4.5}" font-size="13" font-weight="500">${label}</text>`)
-    parts.push(`<g transform="translate(${BAR_X},${(H - BAR_H) / 2})">
+    if (!hasBar) {
+      parts.push(`<text class="ub-t" x="16" y="${cy + 4.5}" font-size="12.5" font-weight="600">${percentText}</text>`)
+    } else {
+      parts.push(`<g transform="translate(${BAR_X},${(H - BAR_H) / 2})">
 <clipPath id="ub-clip${id}"><rect width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/></clipPath>
 <rect class="ub-k" width="${BAR_W}" height="${BAR_H}" rx="${BAR_H / 2}"/>
 ${fillW > 0 ? `<g clip-path="url(#ub-clip${id})"><g clip-path="url(#ub-fill${id})"><use href="#ub-dots" x="${fillW - maxFill}" fill="${color}"/></g></g>
 <clipPath id="ub-fill${id}"><rect width="${fillW}" height="${BAR_H}"/></clipPath>` : ''}
 ${tag}
 </g>`)
-    parts.push(`<text class="ub-m" x="${BAR_X + BAR_W + 8}" y="${cy + 4.5}" font-size="12.5">${percentText}</text>`)
+      parts.push(`<text class="ub-m" x="${BAR_X + BAR_W + 8}" y="${cy + 4.5}" font-size="12.5">${percentText}</text>`)
+    }
 
     let x = span - rightW + GAP
     for (const r of right) {
@@ -276,15 +287,18 @@ export const rowSvg = (u: Usage, W: number, now: number, c: Cache | null = null,
   }
   const maxFill = Math.max(...layouts.map(l => l.fillW))
 
+  // The only layout is never hidden: below W it shrinks whole.
   const show = widths
     .map((w, i) =>
       i === 0
-        ? `@media (max-width:${w - 0.01}px){.ub-L0{display:none}}`
+        ? widths.length > 1
+          ? `@media (max-width:${w - 0.01}px){.ub-L0{display:none}}`
+          : ''
         : `@media ${i < widths.length - 1 ? `(min-width:${w}px) and ` : ''}(max-width:${widths[i - 1]! - 0.01}px){.ub-L${i}{display:inline}}`,
     )
     .join('\n')
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-family="${FONT}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="${H}" font-family="${FONT}">
 <style>
 .ub-t{fill:#1f1f1f}.ub-m{fill:#8a8a8a}.ub-k{fill:#e4e4e2}.ub-ring{stroke:#e4e4e2}.ub-sep{stroke:#d8d8d4;stroke-width:1}
 @media (prefers-color-scheme: dark){.ub-t{fill:#ececec}.ub-m{fill:#9a9a9a}.ub-k{fill:#3a3a3a}.ub-ring{stroke:#3d3d3d}.ub-sep{stroke:#4a4a4a}}
